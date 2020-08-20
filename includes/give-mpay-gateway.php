@@ -118,7 +118,7 @@ class Give_Mpay_Gateway
 
         $arg = array(
             self::QUERY_VAR => $passphrase,
-            'payment_id' => $payment_id,
+            'payment-id' => $payment_id,
         );
         return add_query_arg($arg, site_url('/'));
     }
@@ -157,10 +157,10 @@ class Give_Mpay_Gateway
 		$shash = strtoupper( hash( 'sha256', $hash_key . "Continue" . $mid . $invno . $amt ) );
 		
 		// Get the success url.
-		$return_url = add_query_arg( array(
-			'payment-confirmation' => 'mpay',
-			'payment-id'           => $payment_id,
-		), get_permalink( give_get_option( 'success_page' ) ) );
+		// $return_url = add_query_arg( array(
+		// 	'payment-confirmation' => 'mpay',
+		// 	'payment-id'           => $payment_id,
+		// ), get_permalink( give_get_option( 'success_page' ) ) );
  
         $parameter = array(
 			'actionUrl' => $url,
@@ -169,8 +169,8 @@ class Give_Mpay_Gateway
 			'mid' => $mid,
             'amt' => $amt,
             'desc' => substr(trim($mpay_key['description']), 0, 120),
-            'postURL' => $return_url,
-            'phone' => '+60101234567',
+            'postURL' => self::get_listener_url($payment_id),
+            'phone' => '+601000000000',
             'email' => $purchase_data['user_email'],
             //'param'	=> 'GiveWP|' . $payment_id,
         );
@@ -178,33 +178,9 @@ class Give_Mpay_Gateway
 
         $parameter = apply_filters('give_mpay_bill_mandatory_param', $parameter, $purchase_data['post_data']);
 
-        // do payment
-        // $mpay_args_array = array();
 
         //send to payment page as params
         $payment_page = site_url() . "/mpay-payment-pg";
-
-        // build query
-        //$payment_queries = http_build_query($parameter);
-
-        // Fix for some sites that encode the entities.
-    // $payment_queries = str_replace( '&amp;', '&', $payment_queries );
-    
-    //$payment_url =  $payment_page . $payment_queries;
-        
-        // foreach($parameter as $key => $value){
-        //     $mpay_args_array[] = "<input type='hidden' name='$key' value='$value'/>";
-        // }
-
-        // $paymentpage = '<form action="'.$url.'" method="post" id="mpay_payment_form">
-        //   ' . implode('', $mpay_args_array) . '
-        // <input type="submit" class="button-alt" id="submit_mpay_payment_form" value="'.__('Pay via MPay', 'give-mpay').'" />
-        //     <script type="text/javascript">
-        //     window.onload = function(){
-        //         document.getElementById("submit_mpay_payment_form").submit();
-        //       }
-        //     </script>
-        // </form>';
         
 		write_log('Mpay in post data ' . print_r($parameter, true));
      
@@ -215,13 +191,8 @@ class Give_Mpay_Gateway
               }
             </script>';
 			
-
         echo $payment_page;
-        //
-        
-        //echo $payment_url;
-        //wp_redirect($payment_page);
-		//echo "here";
+
         exit;
     }
 
@@ -251,6 +222,8 @@ class Give_Mpay_Gateway
     private function publish_payment($payment_id, $data)
     {
         if ('publish' !== get_post_status($payment_id)) {
+            write_log('mpay listener success:' . $data['responseDesc']);
+			give_set_payment_transaction_id( $payment_id, $data['authCode'] );
             give_update_payment_status($payment_id, 'publish');
             give_insert_payment_note($payment_id, "Payment ID: {$data['invno']}. Authorization Code: {$data['authCode']}");
         }
@@ -271,13 +244,18 @@ class Give_Mpay_Gateway
             return;
         }
 
-        if (!isset($_GET['payment_id'])) {
+        if (!isset($_GET['payment-id'])) {
             status_header(403);
             exit;
         }
 
-        $payment_id = preg_replace('/\D/', '', $_GET['payment_id']);
+        write_log('mpay listener query'. print_r($_GET, true));
+
+        $payment_id = preg_replace('/\D/', '', $_GET['payment-id']);
         $form_id = give_get_payment_form_id($payment_id);
+
+        $payment_data = give_get_payment_meta( $payment_id );
+		write_log('mpay payment meta'. print_r($payment_data, true));
 
         $custom_donation = give_get_meta($form_id, 'mpay_customize_mpay_donations', true, 'global');
         $status = give_is_setting_enabled($custom_donation, 'enabled');
@@ -289,17 +267,15 @@ class Give_Mpay_Gateway
             $queryurl = 'https://pcimdex.mpay.my/mdex2/api/paymentService/queryTransaction/';
         }
 
-        // form body
-            // Retrieve the total donation amount.
-	    $payment_amount = give_donation_amount( $payment_id );
+        $payment_amount = give_donation_amount( $payment_id );
 
         if ($status) {
-            $merchant_id = trim(give_get_meta('mpay_merchant_id', true));
-            $hash_key = trim(give_get_meta('mpay_api_key', true));
+            $merchant_id = trim(give_get_meta($form_id, 'mpay_merchant_id', true));
+            $hash_key = trim(give_get_meta($form_id, 'mpay_api_key', true));
         } else {
             $merchant_id = trim(give_get_option('mpay_merchant_id'));
             $hash_key = trim(give_get_option('mpay_api_key'));
-        }
+		}
 
         $mid         = str_pad( $merchant_id, 10, '0', STR_PAD_LEFT );
         $invno       = 'TP'.date("Ymd").'_'.$payment_id;
@@ -307,6 +283,15 @@ class Give_Mpay_Gateway
         $shash       = strtoupper( hash( 'sha256', $hash_key . "Continue" . $mid . $invno . $amt ) );
 		$shash = strtoupper( hash( 'sha256', $hash_key . "Continue" . $mid . $invno . $amt ) );
 
+        $mpay_args = array(
+            "mid" => $mid,
+            "invno" => $invno,
+            "amt" => $amt,
+            "secureHash" => $shash
+            );
+
+        write_log('Mpay in listener query data ' . print_r($mpay_args, true));
+        write_log('mpay listener query url' . $queryurl);
         $api = wp_remote_post( $queryurl, array(
             'headers' => array( 'Content-Type' => 'application/json'),
             'body' => json_encode( $mpay_args ),
@@ -319,12 +304,16 @@ class Give_Mpay_Gateway
             $this->publish_payment($payment_id, $data);
         }
         if ($data['responseCode'] == '0') {
-                //give_send_to_success_page();
                 $return = add_query_arg(array(
                     'payment-confirmation' => 'mpay',
                     'payment-id' => $payment_id,
                 ), get_permalink(give_get_option('success_page')));
             } else {
+                write_log('mpay failed:'. $data['responseCode'] . $data['responseDesc']);
+                give_record_gateway_error( __( 'Mpay Error', 'give' ), sprintf(__( $data['responseDesc'], 'give' ), json_encode( $_REQUEST ) ), $payment_id );
+                give_set_payment_transaction_id( $payment_id, $data['authCode'] );
+                give_update_payment_status( $payment_id, 'failed' );
+                give_insert_payment_note( $payment_id, __( $data['responseCode'] . ':' . $data['responseDesc'], 'give' ) );
                 $return = give_get_failed_transaction_uri('?payment-id=' . $payment_id);
             }
 
@@ -345,7 +334,6 @@ class Give_Mpay_Gateway
             $payment_id = give_get_donation_id_by_key( $session['purchase_key'] );
         }
 		
-
         $payment = get_post( $payment_id );
         write_log('Mpay in success page ' . $payment->post_status);
         if ( $payment && 'pending' === $payment->post_status ) {
@@ -358,69 +346,6 @@ class Give_Mpay_Gateway
             $content = ob_get_clean();
 
         }   
-		$payment_data = give_get_payment_meta( $payment_id );
-		write_log('mpay payment meta'. print_r($payment_data, true));
-        write_log('mpay cb response'. print_r($_GET, true));
-        $payment_id = preg_replace('/\D/', '', $_GET['payment-id']);
-		$form_id = give_get_payment_form_id($payment_id);
-
-        $custom_donation = give_get_meta($form_id, 'mpay_customize_mpay_donations', true, 'global');
-        $status = give_is_setting_enabled($custom_donation, 'enabled');
-
-        $queryurl = 'https://www.mdex.my/mdex/api/paymentService/queryTransaction/';
-
-        if ( give_is_test_mode() ) {
-            // Test mode
-            $queryurl = 'https://pcimdex.mpay.my/mdex2/api/paymentService/queryTransaction/';
-        }
-
-        // form body
-            // Retrieve the total donation amount.
-	    $payment_amount = give_donation_amount( $payment_id );
-
-        if ($status) {
-            $merchant_id = trim(give_get_meta($form_id, 'mpay_merchant_id', true));
-            $hash_key = trim(give_get_meta($form_id, 'mpay_api_key', true));
-        } else {
-            $merchant_id = trim(give_get_option('mpay_merchant_id'));
-            $hash_key = trim(give_get_option('mpay_api_key'));
-		}
-		
-		$mid = str_pad( $merchant_id, 10, '0', STR_PAD_LEFT );
-        $amt = str_pad( $payment_amount * 100, 12, '0', STR_PAD_LEFT );
-		$invno = 'TP'.date("Ymd").'_'.$payment_id;
-        $shash = strtoupper( hash( 'sha256', $hash_key . "Continue" . $mid . $invno . $amt ) );
-        $mpay_args = array(
-        "mid" => $mid,
-        "invno" => $invno,
-        "amt" => $amt,
-        "secureHash" => $shash
-        );
-
-		write_log('Mpay in post query data ' . print_r($mpay_args, true));
-        write_log('mpay query url' . $queryurl);
-        $api = wp_remote_post( $queryurl, array(
-            'headers' => array( 'Content-Type' => 'application/json'),
-            'body' => json_encode( $mpay_args ),
-        ) );
-
-        $data = json_decode( $api['body'], true );
-        
-        write_log('Mpay in post query response ' . print_r($data, true));
-        
-		if ($data['responseCode'] == '0') {
-
-            write_log('mpay success:' . $data['responseDesc']);
-			give_set_payment_transaction_id( $payment_id, $data['authCode'] );
-			give_update_payment_status( $payment_id, 'publish' );
-		}
-		else {
-            write_log('mpay failed:'. $data['responseCode'] . $data['responseDesc']);
-			give_record_gateway_error( __( 'Mpay Error', 'give' ), sprintf(__( $data['responseDesc'], 'give' ), json_encode( $_REQUEST ) ), $payment_id );
-			give_set_payment_transaction_id( $payment_id, $data['authCode'] );
-			give_update_payment_status( $payment_id, 'failed' );
-			give_insert_payment_note( $payment_id, __( $data['responseCode'] . ':' . $data['responseDesc'], 'give' ) );
-		}
 
         return $content;
     }
