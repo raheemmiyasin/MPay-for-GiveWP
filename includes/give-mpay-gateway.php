@@ -312,9 +312,11 @@ class Give_Mpay_Gateway
                 write_log('mpay failed:'. $data['responseCode'] . $data['responseDesc']);
                 give_record_gateway_error( __( 'Mpay Error', 'give' ), sprintf(__( $data['responseDesc'], 'give' ), json_encode( $_REQUEST ) ), $payment_id );
                 give_set_payment_transaction_id( $payment_id, $data['authCode'] );
-                give_update_payment_status( $payment_id, 'failed' );
+               give_update_payment_status( $payment_id, 'failed' );
                 give_insert_payment_note( $payment_id, __( $data['responseCode'] . ':' . $data['responseDesc'], 'give' ) );
-                $return = give_get_failed_transaction_uri('?payment-id=' . $payment_id);
+                $failedUrl = give_get_failed_transaction_uri('?payment-id=' . $payment_id);
+				$failedUrl = str_replace("_wpnonce","_wponce",$failedUrl);
+                $return = $failedUrl;
             }
 
             wp_redirect($return);
